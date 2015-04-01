@@ -41,6 +41,8 @@ I'm working on clarifying my ideas and working down to the most concise and clea
 At a high level of abstraction, it appears that computer input can be grouped into two sets: discrete input devices such as keyboards and continuous input devices such as mouses and microphones.
 While this may be a valid interpretation when considering the end effect of these input devices (character injection, 2D cursor movement, and audio capture respectively), it abstracts away how computers actually receive and handle input. In the context of Windows, all Human Input Device (HID) data is provided to the computer as discretized raw input packages. As a concrete example, when the mouse is moved, the Windows HID drivers broadcast a packet containing the offset of the mouse from its previous location. Therefore, what appeared to be continuous type input consisting of a path the mouse moved is actually observed by the computer as a series of events, each of which indicates a single offset value. This low level view of computer input as a time-discretized series of input events allows us to generate a unified model of computer input and a language for describing reactive mappings from a series of input events to system actions. In the following sections, we will explore the primitives of this computer input model and build up from these primitives using recent work in functional reactive programming in order to define a language for specifying mappings between input devices and their realized interaction effect within the corresponding interface.
 
+\hl{\tiny Maya says: This makes sense, but my first reaction is that we might be loosing some functionality if we think purely in terms of events; in other words by being purely reactive as opposed to proactively checking the state of an input the device. For example at any time you can check the position of the mouse cursor and map that to something rather than wait for it to move.}
+
 \section{Modeling Device Input and Units of Interaction}
 
 \begin{define}
@@ -51,6 +53,8 @@ An \textbf{input event} is a unit of state information being provided to the sys
 Typically ``input events'' are thought of as referring to a series of one or more state changes within a fixed time constraint, thereby describing a unit of interaction in an interface (e.g. a \textit{click} event).
 In this work, we build off of the concepts and terminology of Event-Driven Functional Reactive Programming (E-FRP) as originally developed by Wan et al. \cite{wan2002event}. From this perspective, our model of device input reframes this terminology in a more fine grained manner, as seen in Definition \ref{def:event}. Essentially, we take a view of input events as externally sourced stimuli provided to the computer in discrete time steps. This has an important implication in modeling device input and units of interaction: input events are not necessarily units of interaction. For instance, \textit{click}, a standard unit of interaction in many interfaces, is not represented by a single input event in this model. Instead, it is represented by a sequence of input events (\texttt{lmouse\_btn\_evt.value.state == DOWN, lmouse\_btn\_evt.value.state == UP}) meeting particular timing constraints (usually both events for \texttt{DOWN} and \texttt{UP} must occur within a time limit on the order of several hundred milliseconds). Due to this distinction between input events and units of interaction in our model, we refer to a unit of interaction as a \textbf{gesture} (we will defined this in a more concrete manner shortly). The benefit of viewing device input and units of interaction in this manner is that it both allows us to describe input that the system already expects (clicks, key presses, etc) in addition to describing structures of input that the computer does not already expect (new touch gestures, switch-based input encodings, etc).
 
+\hl{\tiny Maya says: Are we sure gesture is the right word for this? Given its meanings that immediately come to mind (as in ``touch gesture''), my brain is rejecting this general meaning. Perhaps ``event sequence'' or ``sequence'' or ``interaction unit?''}
+
 The time-discretized nature of this E-FRP based input model allows us to consider all computer input as being state-based since at each time step, the most recent input event reflects the system's belief of the current state of the input device.
 As an example, if at time $t$ keyboard key $k$ is pressed, then the state of $k$, denoted $S_k(t)$, is $[1]$, reflecting the key's ``DOWN'' state (as opposed to $0$ for the key's ``UP'' state). As a second example, if at time $t$ the mouse $m$ is moving up 5 units and to the right 7 units, then $S_m(t) = [7, 5]$. These two examples differ in only one respect: in the first example $S_k$ maps from a time $t$ to a vector from a subset of $\Z$ (specifically, the set $\{0, 1\}$), whereas in the second example $S_m$ maps from a time $t$ to a vector from a subset of $\Z^2$ (bounded in each dimension by the maximum offset detectable by the mouse in a single timestep in positive and negative x and y directions respectively). This provides an intuition into our model's definition for generalized computer input:
 
@@ -58,16 +62,24 @@ As an example, if at time $t$ keyboard key $k$ is pressed, then the state of $k$
 \textbf{Input} from device $d$ is defined as a \textbf{stream} of \textbf{input events} each representing the state of device $d$ at some time $t$, written as $S_d(t)$, where $S_d(t)$ maps time $t$ to a subset of $\Z^n$ with $n$ being device dependent.
 \end{define}
 
+\hl{\tiny Maya says: I'm resisting the definition of an input being a ``mapping" from time (t) to a value. Similarly a device being equivalent to a time series. I think the device is the ``process'' that generates the events. The input is an ordered sequence of asynchronous events, not really a time series. }
+
 \hl{Note: I have yet to find any devices that provide floating point values for input, but I'm sure they exist, so maybe this should be ``a subset of $\R^n$'' instead...}
 
 In order to capture the relation between input events and gestures, our model adopts the semantics of E-FRP as implemented in the reactive Vega visualization grammar \cite{satyanarayan2014declarative} with several modifications.
-These semantics are based on the concept of \textbf{\textit{streams}} and \textbf{\textit{signals}}. Streams are time ordered sequences (mutually exclusive) of input events and signals are arbitrary reactive expressions composed from input events values (denoted $R(S_d(t))$). Streams represent input events as ordered data flows which can be operated over via filtering and combining operations. Signals are computed by evaluating the signal's reactive expression over the state of the most recent event in the stream that the signal corresponds to ($S_d(t)$), utilizing the fact that streams are treated as first class data sources. Given these primitives (signals and streams), we can now offer a formal definition for a gesture:
+These semantics are based on the concept of \textbf{\textit{streams}} and \textbf{\textit{signals}}. {\em Streams} are time ordered sequences (mutually exclusive) of input events. {\em Signals} are arbitrary reactive expressions composed from input events values (denoted $R(S_d(t))$). Streams represent input events as ordered data flows which can be operated over via filtering and combining operations. Signals are computed by evaluating the signal's reactive expression over the state of the most recent event in the stream that the signal corresponds to ($S_d(t)$), utilizing the fact that streams are treated as first class data sources. 
+
+\hl{\tiny Maya says: Definition of stream and event is not clear here. Also, what is the difference between stream and gesture? Isn't signal equivalent to state?}
+
+Given these primitives (signals and streams), we can now offer a formal definition for a gesture:
 
 \begin{define}
 \label{def:gesture}
 A \textbf{gesture} $g$, is a function $f(R, T)$ over the previous $n$ values and times of a signal (i.e. $R = [R(S_d(t-n)), R(S_d(t-n+1)), ..., R(S_d(t))]$, and $T = [t - n + 1, ... , t]$) which returns a tuple consisting of a boolean value indicating if the gesture occurred, and a dictionary of parameter values of the gesture.
 Each gesture is associated to one or more actions $a$ which are executed when $f(R,T)$ returns the boolean value $true$. Gestures are the base unit of interaction within an interface.
 \end{define}
+
+\hl{\tiny Maya says: Shouldn't gesture association with action be separate from whether or not the gesture occurred?}
 
 \hl{Note: This definition is overly complex.
 I need to think of a more concise and simple way to state it.}
